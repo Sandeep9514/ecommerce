@@ -1,0 +1,62 @@
+Attaching the architecture:
+
+							                                             Available                               SUCCESS
+Client -> Order Creation -> TOPIC: Order-created -> Inventory -> TOPIC: inventory-confirmed -> Payment -> TOPIC: payment-success ------|
+Request     Service			                            Service   -> TOPIC: inventory-failed       Service -> TOPIC: payment-failed -------|
+					                                               NOT-AVAILABLE           |                NOT SUCCESS			                     |
+										                                                             |						                                         |            
+										                                                             |-----------------------|-----------------------------|
+															                                                                  Notification Service
+
+Tried above architecture, found some issues, will resolve in my next project.
+
+In this project, I have 4 servicesin one folder.
+To call another microservice, we should not import the whole service code into our project. That creates tight coupling and deployment dependency. Instead, services expose APIs, and other 
+services call those APIs using REST clients like Feign, WebClient, RestTemplate (Old way), or through generated client SDKs.
+In this project, I used Feign client to connect with other services. This is synchronous way of connecting. Kafka is for asynchronous way.
+
+Once client REST API request reach the Order creation Service, Order Service creates order, Order Service publishes inventory-check event to Kafka, Inventory Service consumes event,
+Inventory Service checks stock, Inventory Service publishes inventory-confirmed or inventory-failed (for this Kafka topics are used, for other queries from about product info, 
+feign client is used). If the requested units are avilable, it will generate topics inventory confirmed or failed. 
+
+Payment Service listens for the inventory-confirmed event and then initiates the payment process with Stripe. The Stripe service does not actually confirm the payment at this stage; 
+it only creates a Stripe Checkout Session. After creating the session, I store the sessionId, orderId, customer email, phone number, and payment status (PENDING) in the database. 
+Stripe returns a checkoutUrl and sessionId. In a typical application, the frontend redirects the user to this checkout URL, where they enter their card details and complete the payment.
+Since my project currently does not have a frontend and I am testing through Postman, I would need to invoke the Payment Service synchronously through a REST API (for example, using Feign) 
+so that the checkoutUrl can be returned to the user. With my current Kafka-based asynchronous flow, returning the URL directly to Postman is not possible. Once the user completes the 
+payment, Stripe sends a webhook event to /stripe/webhook. The webhook contains information such as the sessionId and payment status (success or failure). Using the sessionId, I can 
+retrieve the corresponding payment record, obtain the associated orderId, and determine whether the payment succeeded or failed. Based on the payment status, the Payment Service publishes 
+either a payment-success or payment-failed event to Kafka. The Notification Service consumes these events and sends email or SMS notifications to the customer.
+
+"Payment service listens to that inventory confirm information and will try connecting to Stripe. But stripeService written creates the session, doesn't confirm the payment.
+In Stripe service, after session is created, I saved the sessionId, orderId and some other details in an object. This service will return a url with sessionId. Usually, if there
+is a frontend, that will redirect to this url. This url is the place where we add all the card details. But as if we don't have front end code here, using only postman,
+I have to call this payment service from ordercreation service directly (via REST API), so that this (sessionId and url) can be returned back to the user. Later when user
+done with the payment, that response is posted by Stripe at /stripe/webhook. This contains sessionId and status (payment success, payment failed). Now we have this object with 
+sessionId and status, another object with sessionId, orderId, email, mobile number details (object created in stripe service). So we can find the relavent orderId, using status
+we can pass it to different topics payment-success or payment-failed."
+
+From there, notification service will take the info from topics to send the notifications.
+
+But actually, in this project as I followed above architecture, I could not do the test payment (because url not returnd to postman, as I'm not directly calling this from Feign client). 
+So have the notification code but didn't test.
+
+As of now, I'm using kafka between inventory service and payment service. SO no way I can return back the checkout url to postman. If I'm using a feign client., I can return. That's the 
+reaosn I could not test notification service here.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
